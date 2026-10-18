@@ -11,5 +11,7 @@ figures/
 *.pdf
 *.pt
 *.pth
+*.sqlite
+*.sqlite-journal
 .ruff_cache/
 

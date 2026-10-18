@@ -20,8 +20,11 @@ def validate(jobs, horizon, handlers):
         raise ValueError("Job IDs must be distinct")
     known = set(ids)
     for job in jobs:
-        if not 0 < job["work"] or not 0 < job["deadline"] <= horizon:
-            raise ValueError("Positive work and deadline within the fixed horizon required")
+        if (
+            type(job["work"]) is not int or job["work"] <= 0
+            or type(job["deadline"]) is not int or not 0 < job["deadline"] <= horizon
+        ):
+            raise ValueError("Integer positive work and deadline within the fixed horizon required")
         if not set(job["handlers"]) <= set(handlers):
             raise ValueError("Unknown eligible handler")
         if not set(job.get("predecessors", [])) <= known:
@@ -38,7 +41,8 @@ def validate(jobs, horizon, handlers):
         closed.update(ready)
 
 
-def winning(jobs, horizon, handlers, max_failures=1, bucket=1, optimistic=False):
+def winning(jobs, horizon, handlers, max_failures=1, bucket=1, optimistic=False,
+            start=0, remaining=None, streak=None):
     validate(jobs, horizon, handlers)
     ids = {j["id"]: i for i, j in enumerate(jobs)}
     deadlines = [int(j["deadline"]) for j in jobs]
@@ -87,7 +91,17 @@ def winning(jobs, horizon, handlers, max_failures=1, bucket=1, optimistic=False)
                 return True
         return False
 
-    initial = (0, tuple(j["work"] for j in jobs), (0,) * len(handlers))
+    work = tuple(j["work"] for j in jobs) if remaining is None else tuple(remaining)
+    failures = (0,) * len(handlers) if streak is None else tuple(streak)
+    if (
+        type(start) is not int or not 0 <= start <= horizon
+        or len(work) != len(jobs)
+        or len(failures) != len(handlers)
+        or any(type(value) is not int or not 0 <= value <= j["work"] for value, j in zip(work, jobs))
+        or any(type(value) is not int or value < 0 for value in failures)
+    ):
+        raise ValueError("Invalid current debt, clock or handler failure state")
+    initial = (start, work, failures)
     safe = solve(*initial)
     return safe, solve.cache_info().currsize, strategy
 

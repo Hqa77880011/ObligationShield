@@ -1,0 +1,17 @@
+{
+  "id": "two-audits",
+  "horizon": 4,
+  "handlers": ["audit"],
+  "max_consecutive_failures": 1,
+  "existing_count": 0,
+  "base_permit": true,
+  "release": {"object": "example-record"},
+  "jobs": [
+    {"id": "a", "work": 1, "deadline": 4, "handlers": ["audit"], "predecessors": []},
+    {"id": "b", "work": 1, "deadline": 4, "handlers": ["audit"], "predecessors": []}
+  ],
+  "execution_model": {
+    "kind": "finite",
+    "failures": {"0": ["audit"], "2": ["audit"]}
+  }
+}
