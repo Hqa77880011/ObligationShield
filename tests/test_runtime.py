@@ -8,8 +8,10 @@ from obligationshield.runtime import FiniteExecutor, Ledger, drive
 
 
 def audits(deadline=4):
-    return [dict(id=str(i), work=1, deadline=deadline, handlers=["audit"], predecessors=[])
-            for i in range(2)]
+    return [
+        dict(id=str(i), work=1, deadline=deadline, handlers=["audit"], predecessors=[])
+        for i in range(2)
+    ]
 
 
 class RuntimeTests(unittest.TestCase):
@@ -25,7 +27,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(winning([job], 4, ["audit"])[0] for job in jobs))
         self.assertFalse(winning(jobs, 4, ["audit"])[0])
         ledger, _ = self.model(existing=jobs[:1])
-        self.assertEqual(ledger.admit("second", jobs[1:], {"object": "record"}, True), "DENIED")
+        self.assertEqual(
+            ledger.admit("second", jobs[1:], {"object": "record"}, True), "DENIED"
+        )
         self.assertEqual(len(ledger.snapshot()["debt"]), 1)
         self.assertEqual(ledger.releases(), [])
 
@@ -38,12 +42,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(state["tick"], 4)
         self.assertIsNone(state["frozen"])
         self.assertEqual([item["remaining"] for item in state["debt"]], [0, 0])
-        controls = [item for item in state["outbox"] if item["command"]["kind"] == "handler"]
-        self.assertTrue(all(item["command"]["strategy"] == "winning" for item in controls))
+        controls = [
+            item for item in state["outbox"] if item["command"]["kind"] == "handler"
+        ]
+        self.assertTrue(
+            all(item["command"]["strategy"] == "winning" for item in controls)
+        )
         effects = executor.db.execute("SELECT command FROM effects").fetchall()
         self.assertEqual(len(effects), 3)  # One release, two distinct audit effects.
         self.assertEqual(state, drive(ledger, executor))
-        self.assertEqual(executor.db.execute("SELECT COUNT(*) FROM effects").fetchone()[0], 3)
+        self.assertEqual(
+            executor.db.execute("SELECT COUNT(*) FROM effects").fetchone()[0], 3
+        )
 
     def test_missing_receipt_retains_debt_and_defers_admission(self):
         ledger, executor = self.model(handlers=("audit", "notify"), maximum=0)
@@ -65,7 +75,9 @@ class RuntimeTests(unittest.TestCase):
         ledger, executor = self.model()
         ledger.admit("r", audits(), {}, True)
         command = ledger.dispatch()[0]
-        forged = dict(command=command, success=True, effect_committed=True, mode="finite_model")
+        forged = dict(
+            command=command, success=True, effect_committed=True, mode="finite_model"
+        )
         with self.assertRaisesRegex(ValueError, "trusted verifier"):
             ledger.receipt(forged, executor.verify)
         unknown = copy.deepcopy(command)
@@ -73,7 +85,9 @@ class RuntimeTests(unittest.TestCase):
         verified_but_unknown = executor.execute(unknown)
         with self.assertRaisesRegex(ValueError, "persisted command"):
             ledger.receipt(verified_but_unknown, executor.verify)
-        self.assertEqual([item["remaining"] for item in ledger.snapshot()["debt"]], [1, 1])
+        self.assertEqual(
+            [item["remaining"] for item in ledger.snapshot()["debt"]], [1, 1]
+        )
 
     def test_assumption_failure_freezes_new_releases_and_recovers_debt(self):
         ledger, executor = self.model(maximum=0, failures={"0": ["audit"]})
@@ -84,7 +98,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(ledger.admit("later", [], {}, True), "DEFER")
         self.assertFalse(ledger.emit_release(ledger.releases()[0], executor))
         self.assertEqual(ledger.dispatch()[0]["strategy"], "recovery_edf")
-        self.assertEqual([item["remaining"] for item in drive(ledger, executor)["debt"]], [0, 0])
+        self.assertEqual(
+            [item["remaining"] for item in drive(ledger, executor)["debt"]], [0, 0]
+        )
 
     def test_predecessors_wait_for_authenticated_completion(self):
         ledger, executor = self.model(maximum=0)
@@ -106,7 +122,15 @@ class RuntimeTests(unittest.TestCase):
         before = ledger.snapshot()
         with self.assertRaisesRegex(ValueError, "different arguments"):
             ledger.admit("r", audits(), {"different": True}, True)
-        invalid = [dict(id="bad", work=1, deadline=4, handlers=["audit"], predecessors=["unknown"])]
+        invalid = [
+            dict(
+                id="bad",
+                work=1,
+                deadline=4,
+                handlers=["audit"],
+                predecessors=["unknown"],
+            )
+        ]
         with self.assertRaisesRegex(ValueError, "Unknown predecessor"):
             ledger.admit("invalid", invalid, {}, True)
         self.assertEqual(ledger.snapshot(), before)

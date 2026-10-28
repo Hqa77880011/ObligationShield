@@ -18,10 +18,14 @@ class Ledger:
 
     def __init__(self, path, horizon, handlers, max_failures=1, bucket=1, existing=()):
         if (
-            type(horizon) is not int or horizon < 1
-            or type(max_failures) is not int or max_failures < 0
-            or type(bucket) is not int or bucket < 1
-            or not handlers or len(set(handlers)) != len(handlers)
+            type(horizon) is not int
+            or horizon < 1
+            or type(max_failures) is not int
+            or max_failures < 0
+            or type(bucket) is not int
+            or bucket < 1
+            or not handlers
+            or len(set(handlers)) != len(handlers)
         ):
             raise ValueError("Use a positive horizon/bucket and distinct handlers")
         validate(list(existing), horizon, handlers)
@@ -45,19 +49,32 @@ class Ledger:
                 command TEXT NOT NULL, receipt TEXT
             );
         """)
-        config = encode(dict(horizon=horizon, handlers=handlers, max_failures=max_failures,
-                             bucket=bucket, existing=list(existing)))
+        config = encode(
+            dict(
+                horizon=horizon,
+                handlers=handlers,
+                max_failures=max_failures,
+                bucket=bucket,
+                existing=list(existing),
+            )
+        )
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             row = self.db.execute("SELECT config FROM state WHERE id=1").fetchone()
             if row and row[0] != config:
-                raise ValueError("Ledger is bound to a different resource/episode contract")
+                raise ValueError(
+                    "Ledger is bound to a different resource/episode contract"
+                )
             if not row:
-                self.db.execute("INSERT INTO state VALUES (1,?,0,?,NULL)",
-                                (config, encode([0] * len(handlers))))
+                self.db.execute(
+                    "INSERT INTO state VALUES (1,?,0,?,NULL)",
+                    (config, encode([0] * len(handlers))),
+                )
                 for job in existing:
-                    self.db.execute("INSERT INTO jobs VALUES (?,?,?,?)",
-                                    (job["id"], encode(job), job["work"], "existing"))
+                    self.db.execute(
+                        "INSERT INTO jobs VALUES (?,?,?,?)",
+                        (job["id"], encode(job), job["work"], "existing"),
+                    )
 
     def close(self):
         self.db.close()
@@ -66,20 +83,32 @@ class Ledger:
         tick, streak, frozen = self.db.execute(
             "SELECT tick,streak,frozen FROM state WHERE id=1"
         ).fetchone()
-        rows = self.db.execute("SELECT spec,remaining,origin FROM jobs ORDER BY id").fetchall()
+        rows = self.db.execute(
+            "SELECT spec,remaining,origin FROM jobs ORDER BY id"
+        ).fetchall()
         return tick, tuple(json.loads(streak)), frozen, rows
 
     def _pending_handlers(self):
-        return bool(self.db.execute(
-            "SELECT 1 FROM outbox WHERE kind='handler' AND receipt IS NULL LIMIT 1"
-        ).fetchone())
+        return bool(
+            self.db.execute(
+                "SELECT 1 FROM outbox WHERE kind='handler' AND receipt IS NULL LIMIT 1"
+            ).fetchone()
+        )
 
     def _solve(self, tick, streak, rows):
         jobs = [json.loads(row[0]) for row in rows]
         work = tuple(row[1] for row in rows)
         safe, states, strategy = winning(
-            jobs, self.horizon, self.handlers, self.max_failures, self.bucket,
-            start=tick, remaining=work, streak=streak,
+            jobs,
+            self.horizon,
+            self.handlers,
+            self.max_failures,
+            self.bucket,
+            start=tick,
+            remaining=work,
+            streak=streak,
+            quotient=True,
+            antichains=True,
         )
         return safe, states, strategy, jobs, work
 
@@ -90,8 +119,9 @@ class Ledger:
         spec = encode(dict(jobs=jobs, release=release, base_permit=base_permit))
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            prior = self.db.execute("SELECT spec,decision FROM requests WHERE id=?",
-                                    (request_id,)).fetchone()
+            prior = self.db.execute(
+                "SELECT spec,decision FROM requests WHERE id=?", (request_id,)
+            ).fetchone()
             if prior:
                 if prior[0] != spec:
                     raise ValueError("Request ID replayed with different arguments")
@@ -107,29 +137,45 @@ class Ledger:
             proposed = rows + [(encode(job), job["work"], request_id) for job in jobs]
             safe, _, _, _, _ = self._solve(tick, streak, proposed)
             decision = "ADMITTED" if base_permit and safe else "DENIED"
-            self.db.execute("INSERT INTO requests VALUES (?,?,?)", (request_id, spec, decision))
+            self.db.execute(
+                "INSERT INTO requests VALUES (?,?,?)", (request_id, spec, decision)
+            )
             if decision == "ADMITTED":
                 for job in jobs:
-                    self.db.execute("INSERT INTO jobs VALUES (?,?,?,?)",
-                                    (job["id"], encode(job), job["work"], request_id))
-                command = dict(id="release:" + request_id, kind="release", request=request_id,
-                               authorized_tick=tick, payload=release)
-                self.db.execute("INSERT INTO outbox VALUES (?,?,?,NULL)",
-                                (command["id"], "release", encode(command)))
+                    self.db.execute(
+                        "INSERT INTO jobs VALUES (?,?,?,?)",
+                        (job["id"], encode(job), job["work"], request_id),
+                    )
+                command = dict(
+                    id="release:" + request_id,
+                    kind="release",
+                    request=request_id,
+                    authorized_tick=tick,
+                    payload=release,
+                )
+                self.db.execute(
+                    "INSERT INTO outbox VALUES (?,?,?,NULL)",
+                    (command["id"], "release", encode(command)),
+                )
             return decision
 
     def releases(self):
         """List pending committed records; emit_release validates at invocation."""
-        return [json.loads(row[0]) for row in self.db.execute(
-            "SELECT command FROM outbox WHERE kind='release' AND receipt IS NULL ORDER BY id"
-        )]
+        return [
+            json.loads(row[0])
+            for row in self.db.execute(
+                "SELECT command FROM outbox WHERE kind='release' AND receipt IS NULL ORDER BY id"
+            )
+        ]
 
     def emit_release(self, command, executor):
         """Keep clock/debt validation and release invocation in one serialized gate."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            row = self.db.execute("SELECT command,receipt FROM outbox WHERE id=? AND kind='release'",
-                                  (command["id"],)).fetchone()
+            row = self.db.execute(
+                "SELECT command,receipt FROM outbox WHERE id=? AND kind='release'",
+                (command["id"],),
+            ).fetchone()
             if row is None or row[0] != encode(command):
                 raise ValueError("Release is not a committed admission outbox record")
             if row[1] is not None:
@@ -138,18 +184,28 @@ class Ledger:
             receipt = executor.lookup(command)
             if receipt is None:
                 tick, streak, frozen, rows = self._state()
-                if frozen or self._pending_handlers() or not self._solve(tick, streak, rows)[0]:
+                if (
+                    frozen
+                    or self._pending_handlers()
+                    or not self._solve(tick, streak, rows)[0]
+                ):
                     return False
                 receipt = executor.execute(command)
             if receipt is None:
                 return False
             if (
-                not executor.verify(receipt) or receipt.get("command") != command
+                not executor.verify(receipt)
+                or receipt.get("command") != command
                 or receipt.get("success") is not True
                 or receipt.get("effect_committed") is not True
             ):
-                raise ValueError("Release needs an authenticated committed-effect receipt")
-            self.db.execute("UPDATE outbox SET receipt=? WHERE id=?", (encode(receipt), command["id"]))
+                raise ValueError(
+                    "Release needs an authenticated committed-effect receipt"
+                )
+            self.db.execute(
+                "UPDATE outbox SET receipt=? WHERE id=?",
+                (encode(receipt), command["id"]),
+            )
             return True
 
     def dispatch(self):
@@ -157,9 +213,12 @@ class Ledger:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             tick, streak, frozen, rows = self._state()
-            pending = [json.loads(row[0]) for row in self.db.execute(
-                "SELECT command FROM outbox WHERE kind='handler' AND receipt IS NULL ORDER BY id"
-            )]
+            pending = [
+                json.loads(row[0])
+                for row in self.db.execute(
+                    "SELECT command FROM outbox WHERE kind='handler' AND receipt IS NULL ORDER BY id"
+                )
+            ]
             if pending:
                 return pending
             safe, _, strategy, jobs, work = self._solve(tick, streak, rows)
@@ -173,10 +232,20 @@ class Ledger:
                 source, assignment, assigned = "recovery_edf", [], [0] * len(jobs)
                 index = {job["id"]: i for i, job in enumerate(jobs)}
                 for handler in self.handlers:
-                    ready = [i for i, job in enumerate(jobs)
-                             if handler in job["handlers"] and work[i] > assigned[i]
-                             and all(work[index[p]] == 0 for p in job.get("predecessors", []))]
-                    chosen = min(ready, key=lambda i: (jobs[i]["deadline"], jobs[i]["id"])) if ready else -1
+                    ready = [
+                        i
+                        for i, job in enumerate(jobs)
+                        if handler in job["handlers"]
+                        and work[i] > assigned[i]
+                        and all(
+                            work[index[p]] == 0 for p in job.get("predecessors", [])
+                        )
+                    ]
+                    chosen = (
+                        min(ready, key=lambda i: (jobs[i]["deadline"], jobs[i]["id"]))
+                        if ready
+                        else -1
+                    )
                     assignment.append(chosen)
                     if chosen >= 0:
                         assigned[chosen] += 1
@@ -185,13 +254,21 @@ class Ledger:
             commands = []
             for handler, job_index in zip(self.handlers, assignment):
                 job = jobs[job_index] if job_index >= 0 else None
-                command = dict(id=f"tick:{tick}:{handler}", kind="handler", tick=tick,
-                               handler=handler, job=job["id"] if job else None,
-                               origin=rows[job_index][2] if job else None,
-                               obligation=job, work_units=1 if job else 0,
-                               strategy=source)
-                self.db.execute("INSERT INTO outbox VALUES (?,?,?,NULL)",
-                                (command["id"], "handler", encode(command)))
+                command = dict(
+                    id=f"tick:{tick}:{handler}",
+                    kind="handler",
+                    tick=tick,
+                    handler=handler,
+                    job=job["id"] if job else None,
+                    origin=rows[job_index][2] if job else None,
+                    obligation=job,
+                    work_units=1 if job else 0,
+                    strategy=source,
+                )
+                self.db.execute(
+                    "INSERT INTO outbox VALUES (?,?,?,NULL)",
+                    (command["id"], "handler", encode(command)),
+                )
                 commands.append(command)
             return commands
 
@@ -202,61 +279,99 @@ class Ledger:
         command = receipt["command"]
         success, committed = receipt.get("success"), receipt.get("effect_committed")
         if type(success) is not bool or type(committed) is not bool:
-            raise ValueError("Receipt needs explicit success and effect_committed Booleans")
-        expected_effect = success and (command["kind"] == "release" or command.get("job") is not None)
+            raise ValueError(
+                "Receipt needs explicit success and effect_committed Booleans"
+            )
+        expected_effect = success and (
+            command["kind"] == "release" or command.get("job") is not None
+        )
         if committed != expected_effect or command["kind"] == "release" and not success:
-            raise ValueError("Unresolved effects cannot be treated as confirmed discharge")
+            raise ValueError(
+                "Unresolved effects cannot be treated as confirmed discharge"
+            )
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            row = self.db.execute("SELECT command,receipt FROM outbox WHERE id=?",
-                                  (command["id"],)).fetchone()
+            row = self.db.execute(
+                "SELECT command,receipt FROM outbox WHERE id=?", (command["id"],)
+            ).fetchone()
             if row is None or row[0] != encode(command):
                 raise ValueError("Receipt does not match a persisted command")
             if row[1] is not None:
                 if row[1] != encode(receipt):
-                    raise ValueError("Conflicting receipt for an already settled command")
+                    raise ValueError(
+                        "Conflicting receipt for an already settled command"
+                    )
                 return
-            self.db.execute("UPDATE outbox SET receipt=? WHERE id=?", (encode(receipt), command["id"]))
+            self.db.execute(
+                "UPDATE outbox SET receipt=? WHERE id=?",
+                (encode(receipt), command["id"]),
+            )
             if command["kind"] != "handler":
                 return
             tick, streak, frozen, rows = self._state()
             if command["tick"] != tick:
                 raise ValueError("Receipt belongs to a different clock layer")
-            current = [json.loads(row[0]) for row in self.db.execute(
-                "SELECT receipt FROM outbox WHERE kind='handler' AND id LIKE ? ORDER BY id",
-                (f"tick:{tick}:%",)) if row[0] is not None]
+            current = [
+                json.loads(row[0])
+                for row in self.db.execute(
+                    "SELECT receipt FROM outbox WHERE kind='handler' AND id LIKE ? ORDER BY id",
+                    (f"tick:{tick}:%",),
+                )
+                if row[0] is not None
+            ]
             if len(current) != len(self.handlers):
                 return  # A missing receipt retains debt and blocks further admissions.
             outcomes = {item["command"]["handler"]: item for item in current}
             for item in current:
                 if item["effect_committed"]:
-                    self.db.execute("UPDATE jobs SET remaining=remaining-1 WHERE id=?",
-                                    (item["command"]["job"],))
-            following = [0 if outcomes[h]["success"] else streak[i] + 1
-                         for i, h in enumerate(self.handlers)]
+                    self.db.execute(
+                        "UPDATE jobs SET remaining=remaining-1 WHERE id=?",
+                        (item["command"]["job"],),
+                    )
+            following = [
+                0 if outcomes[h]["success"] else streak[i] + 1
+                for i, h in enumerate(self.handlers)
+            ]
             if any(value > self.max_failures for value in following):
                 frozen = "failure_contract"
-            overdue = any(remaining > 0 and tick + 1 >= json.loads(spec)["deadline"]
-                          for spec, remaining, _ in self._state()[3])
+            overdue = any(
+                remaining > 0 and tick + 1 >= json.loads(spec)["deadline"]
+                for spec, remaining, _ in self._state()[3]
+            )
             if overdue and not frozen:
                 frozen = "overdue"
-            self.db.execute("UPDATE state SET tick=?,streak=?,frozen=? WHERE id=1",
-                            (tick + 1, encode(following), frozen))
+            self.db.execute(
+                "UPDATE state SET tick=?,streak=?,frozen=? WHERE id=1",
+                (tick + 1, encode(following), frozen),
+            )
 
     def snapshot(self):
         tick, streak, frozen, rows = self._state()
-        outbox = [dict(command=json.loads(c), receipt=json.loads(r) if r else None)
-                  for c, r in self.db.execute("SELECT command,receipt FROM outbox ORDER BY rowid")]
-        return dict(tick=tick, streak=list(streak), frozen=frozen,
-                    debt=[dict(job=json.loads(spec), remaining=work, origin=origin)
-                          for spec, work, origin in rows], outbox=outbox)
+        outbox = [
+            dict(command=json.loads(c), receipt=json.loads(r) if r else None)
+            for c, r in self.db.execute(
+                "SELECT command,receipt FROM outbox ORDER BY rowid"
+            )
+        ]
+        return dict(
+            tick=tick,
+            streak=list(streak),
+            frozen=frozen,
+            debt=[
+                dict(job=json.loads(spec), remaining=work, origin=origin)
+                for spec, work, origin in rows
+            ],
+            outbox=outbox,
+        )
 
 
 class FiniteExecutor:
     """Explicit local model: committed effects and receipts survive process restarts."""
 
     def __init__(self, path, failures):
-        self.failures = {int(tick): set(handlers) for tick, handlers in failures.items()}
+        self.failures = {
+            int(tick): set(handlers) for tick, handlers in failures.items()
+        }
         self.db = sqlite3.connect(path, isolation_level=None)
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS model (config TEXT PRIMARY KEY);
@@ -273,7 +388,9 @@ class FiniteExecutor:
         self.db.close()
 
     def lookup(self, command):
-        row = self.db.execute("SELECT receipt FROM commands WHERE id=?", (command["id"],)).fetchone()
+        row = self.db.execute(
+            "SELECT receipt FROM commands WHERE id=?", (command["id"],)
+        ).fetchone()
         if row is None:
             return None
         receipt = json.loads(row[0])
@@ -284,24 +401,42 @@ class FiniteExecutor:
     def execute(self, command):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            prior = self.db.execute("SELECT receipt FROM commands WHERE id=?", (command["id"],)).fetchone()
+            prior = self.db.execute(
+                "SELECT receipt FROM commands WHERE id=?", (command["id"],)
+            ).fetchone()
             if prior:
                 receipt = json.loads(prior[0])
                 if receipt["command"] != command:
-                    raise ValueError("Executor idempotency key reused with different arguments")
+                    raise ValueError(
+                        "Executor idempotency key reused with different arguments"
+                    )
                 return receipt
-            success = command["kind"] == "release" or command["handler"] not in self.failures.get(command["tick"], set())
-            committed = success and (command["kind"] == "release" or command["job"] is not None)
-            receipt = dict(command=command, success=success, effect_committed=committed,
-                           mode="finite_model")
+            success = command["kind"] == "release" or command[
+                "handler"
+            ] not in self.failures.get(command["tick"], set())
+            committed = success and (
+                command["kind"] == "release" or command["job"] is not None
+            )
+            receipt = dict(
+                command=command,
+                success=success,
+                effect_committed=committed,
+                mode="finite_model",
+            )
             if committed:
-                self.db.execute("INSERT INTO effects VALUES (?,?)", (command["id"], encode(command)))
-            self.db.execute("INSERT INTO commands VALUES (?,?)", (command["id"], encode(receipt)))
+                self.db.execute(
+                    "INSERT INTO effects VALUES (?,?)", (command["id"], encode(command))
+                )
+            self.db.execute(
+                "INSERT INTO commands VALUES (?,?)", (command["id"], encode(receipt))
+            )
             return receipt
 
     def verify(self, receipt):
-        row = self.db.execute("SELECT receipt FROM commands WHERE id=?",
-                              (receipt.get("command", {}).get("id"),)).fetchone()
+        row = self.db.execute(
+            "SELECT receipt FROM commands WHERE id=?",
+            (receipt.get("command", {}).get("id"),),
+        ).fetchone()
         return row is not None and row[0] == encode(receipt)
 
 
@@ -327,9 +462,15 @@ def drive(ledger, executor):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case", required=True, help="One JSON episode with jobs and explicit execution model")
+    parser.add_argument(
+        "--case",
+        required=True,
+        help="One JSON episode with jobs and explicit execution model",
+    )
     parser.add_argument("--ledger", required=True)
-    parser.add_argument("--executor", required=True, help="finite or trusted module:factory")
+    parser.add_argument(
+        "--executor", required=True, help="finite or trusted module:factory"
+    )
     parser.add_argument("--effects", help="Persistent finite-model effect database")
     parser.add_argument("--bucket", type=int, default=1)
     parser.add_argument("--output", required=True)
@@ -344,15 +485,48 @@ def main():
         module, factory = args.executor.rsplit(":", 1)
         executor = getattr(importlib.import_module(module), factory)(case)
     count = case.get("existing_count", 0)
-    ledger = Ledger(args.ledger, case["horizon"], case["handlers"],
-                    case["max_consecutive_failures"], args.bucket, case["jobs"][:count])
+    ledger = Ledger(
+        args.ledger,
+        case["horizon"],
+        case["handlers"],
+        case["max_consecutive_failures"],
+        args.bucket,
+        case["jobs"][:count],
+    )
     try:
-        decision = ledger.admit(case["id"], case["jobs"][count:], case["release"], case["base_permit"])
-        result = dict(decision=decision, execution_mode=args.executor,
-                      state=drive(ledger, executor))
+        decision = ledger.admit(
+            case["id"], case["jobs"][count:], case["release"], case["base_permit"]
+        )
+        state = drive(ledger, executor)
+        debt = [item for item in state["debt"] if item["origin"] == case["id"]]
+        missed = sum(
+            item["remaining"] > 0 and state["tick"] >= item["job"]["deadline"]
+            for item in debt
+        )
+        resolved = all(item["remaining"] == 0 for item in debt)
+        ov = (
+            int(missed > 0) if decision == "ADMITTED" and (resolved or missed) else None
+        )
+        result = dict(
+            decision=decision,
+            execution_mode=args.executor,
+            state=state,
+            metrics=dict(
+                obligation_violation=ov,
+                missed_jobs=missed,
+                job_violation_rate=missed / len(debt)
+                if debt and (resolved or missed)
+                else None,
+                functional_success=int(
+                    decision == "ADMITTED" and resolved and not ledger.releases()
+                ),
+            ),
+        )
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8")
+        output.write_text(
+            json.dumps(result, indent=2, allow_nan=False), encoding="utf-8"
+        )
     finally:
         ledger.close()
         executor.close()
