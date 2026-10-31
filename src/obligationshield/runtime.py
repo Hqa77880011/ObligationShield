@@ -221,7 +221,13 @@ class Ledger:
             ]
             if pending:
                 return pending
-            safe, _, strategy, jobs, work = self._solve(tick, streak, rows)
+            if frozen:
+                # Recovery serves accepted debt without certifying an invalid game state.
+                safe, strategy = False, {}
+                jobs = [json.loads(row[0]) for row in rows]
+                work = tuple(row[1] for row in rows)
+            else:
+                safe, _, strategy, jobs, work = self._solve(tick, streak, rows)
             if not any(work) or tick >= self.horizon:
                 return []
             if safe and not frozen:

@@ -4,6 +4,12 @@ from obligationshield import core
 
 
 class GameTests(unittest.TestCase):
+    def test_failure_contract_violation_cannot_receive_winning_strategy(self):
+        jobs = [dict(id="a", work=1, deadline=2, handlers=["audit"])]
+        with self.assertRaisesRegex(ValueError, "failure state"):
+            core.winning(jobs, 2, ["audit"], 1, streak=(2,))
+        self.assertTrue(core.winning(jobs, 2, ["audit"], 1, streak=(1,))[0])
+
     def test_false_safe_denominator_is_admitted_states(self):
         case = {
             "jobs": [],

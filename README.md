@@ -91,6 +91,10 @@ Validated locally: editable installation, syntax/import and regression checks, s
 
 Regression checks cover hand-computable rates and eligible denominators, the algorithm's safety boundary, and applicable replay/serialization paths. The documented small-data preparation, execution, suite, evaluation, statistics and plotting commands are the validation entry points. No complete training or large experimental campaign is required for these checks.
 
+Direct finite-game continuation queries reject failure streaks outside the declared
+automaton, matching the runtime's freeze-on-assumption-failure boundary. A streak
+equal to the bound remains legal and forces the next modeled recovery tick.
+
 Quotienting is deliberately sufficient: only isolated jobs identical in every non-ID field can exchange origins. Other DAG jobs retain identity. Antichains apply to componentwise remaining work within the fixed monotone job/failure model; no cancellation or resource-creating transitions are admitted. The runtime uses SQLite and explicit logical-tick executors; arbitrary fallback branch contracts, PostgreSQL server performance and external authenticated handlers are not implemented. A handler plugin must supply execute, lookup, verify and close; its trust contract requires separate validation.
 
 The source retains its existing MIT license. Data and external systems remain subject to their own licenses and access rules.

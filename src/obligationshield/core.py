@@ -186,7 +186,8 @@ def winning(
             type(value) is not int or not 0 <= value <= j["work"]
             for value, j in zip(work, jobs)
         )
-        or any(type(value) is not int or value < 0 for value in failures)
+        or any(type(value) is not int or not 0 <= value <= max_failures
+               for value in failures)
     ):
         raise ValueError("Invalid current debt, clock or handler failure state")
     initial = (start, work, failures)
